@@ -64,6 +64,42 @@ class Routes
         $classMetadata['scope'] = $scope = static::scope($class);
         $methods = $class->getMethods(ReflectionMethod::IS_PUBLIC +
             ReflectionMethod::IS_PROTECTED);
+
+        // Check for 'final' access in class header of parent classes, which means stop documenting methods
+        $parent_class = $class;
+        $final_class = false;
+        do {
+            try {
+                $parentClassMetadata = CommentParser::parse($parent_class->getDocComment());
+            } catch (Exception $e) {
+                throw new RestException(500, "Error while parsing comments of parent class of `$className` class. " . $e->getMessage());
+            }
+            if (isset($parentClassMetadata['access']) && $parentClassMetadata['access'] == 'final') {
+                // Final class is actually the one above the one with 'final' access
+                $final_class = $parent_class->getParentClass();
+                break;
+            }
+        } while (($parent_class = $parent_class->getParentClass()) !== false);
+
+        // If found a final class, then filter the methods
+        if (!empty($final_class)) {
+            // Make hash of all methods
+            $method_hash = [];
+            foreach ($methods as $k => $method) {
+                $method_hash[$method->getName()] = $k;
+            }
+
+            // Get all the methods in the parent class of where 'final' is and remove them from the method array
+            foreach ($final_class->getMethods(
+                ReflectionMethod::IS_PUBLIC +
+                ReflectionMethod::IS_PROTECTED
+            ) as $method) {
+                if (isset($method_hash[$method->getName()])) {
+                    unset($methods[$method_hash[$method->getName()]]);
+                }
+            }
+        }
+
         foreach ($methods as $method) {
             $methodUrl = strtolower($method->getName());
             //method name should not begin with _
